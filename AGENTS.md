@@ -19,6 +19,7 @@ dy93/
     ├── sources.tsv     # 帳本：sync/ 下每個檔案對應的 YouTube + Spotify 來源
     ├── playlists.tsv   # folder ↔ Spotify 歌單的預先對應（pipeline.py 用）
     ├── title_aliases.tsv  # 歌單標題 → 曲庫標籤的別名（重用已下載的歌）
+    ├── trims.tsv       # yt_id → 剪掉片頭/前奏秒數（restage --from-yt / pipeline 自動套用）
     ├── 01/001_xxx.mp3  # SD 卡的完整映射（NN folder / 每個 folder 內從 001 編號）
     └── ...
 ```
@@ -60,6 +61,7 @@ python3 sync.py add "網址" --start 10.05      # 剪掉前 10.05 秒片頭
 python3 yt.py --list "關鍵字"                  # 列前 5 個候選，不下載
 python3 sync.py list                          # 看 sync/ 每首歌的 YouTube 來源
 python3 sync.py restage                       # 重轉/改音質後，從 source/mp3/ 重建 sync/
+python3 sync.py restage --from-yt             # 從 source/yt/ 重轉（套用 trims.tsv）並重建 sync/
 ```
 
 SD 卡插上來之後（唯一要做的事）：

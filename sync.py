@@ -286,15 +286,40 @@ def add(sources, folder=None, label=None, start=0.0, dry_run=False):
 
 # ── restage ──────────────────────────────────────────────────────────────────
 
-def restage():
-    """Re-copy every ledgered song from source/mp3/ into sync/ (after re-encoding etc.)."""
+def load_trims():
+    """Return {yt_id: start_seconds} from sync/trims.tsv."""
+    trims = {}
+    trims_file = os.path.join(SYNC_DIR, "trims.tsv")
+    if os.path.isfile(trims_file):
+        with open(trims_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    parts = line.split("\t")
+                    if len(parts) >= 2:
+                        trims[parts[0]] = float(parts[1])
+    return trims
+
+
+def restage(from_yt=False):
+    """Re-copy every ledgered song from source/mp3/ into sync/.
+
+    With --from-yt, re-encode from source/yt/ first (applying sync/trims.tsv).
+    """
     table = ledger_load()
     if not table:
         sys.exit("ERROR: ledger is empty")
+    trims = load_trims() if from_yt else {}
+    yt_dir = yt.DEFAULT_OUT
     missing = []
     for card_rel in sorted(table):
         parts = card_rel.split(os.sep)
         label = FILE_RE.match(parts[-1]).group(2)
+        if from_yt:
+            yt_id = table[card_rel].get("yt_id", "-")
+            vids = [f for f in os.listdir(yt_dir) if f"[{yt_id}]" in f] if yt_id != "-" else []
+            if vids:
+                convert_to_library(os.path.join(yt_dir, vids[0]), label, start=trims.get(yt_id, 0.0))
         lib_path = library_path_for(label)
         if not os.path.isfile(lib_path):
             missing.append(card_rel)
@@ -490,7 +515,9 @@ def main():
     p_clean = sub.add_parser("clean", help="dot_clean + remove ghost files (before ejecting)")
     card_arg(p_clean)
 
-    sub.add_parser("restage", help="re-copy all songs from source/mp3/ into sync/")
+    p_restage = sub.add_parser("restage", help="re-copy all songs from source/mp3/ into sync/")
+    p_restage.add_argument("--from-yt", action="store_true",
+                           help="re-encode from source/yt/ first (applies sync/trims.tsv)")
     sub.add_parser("list", help="show sync/ tree with sources")
 
     args = parser.parse_args()
@@ -503,7 +530,7 @@ def main():
     elif args.cmd == "clean":
         clean(args.card)
     elif args.cmd == "restage":
-        restage()
+        restage(from_yt=args.from_yt)
     elif args.cmd == "list":
         list_sync()
 

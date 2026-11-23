@@ -96,7 +96,8 @@ def reconcile_folder(folder_num, tracks, aliases):
                 video, new_id = yt.download(f"{title} {artist}", capture=True)
                 yt_id = new_id or yt_id
             yt_title = mp3.output_stem(video)
-            lib = sync.convert_to_library(video, label)
+            trims = sync.load_trims()
+            lib = sync.convert_to_library(video, label, start=trims.get(yt_id, 0.0))
         else:
             print(f"  [{folder} #{pos:02d}] reuse library: {label}.mp3")
 
