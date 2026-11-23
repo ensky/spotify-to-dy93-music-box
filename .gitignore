@@ -1,0 +1,5 @@
+# 大型媒體檔不入 git，來源與對應關係都在 sources.tsv
+source/yt/
+source/mp3/
+sync/**/*.mp3
+.DS_Store
