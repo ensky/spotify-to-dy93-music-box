@@ -229,12 +229,33 @@ def add(sources, folder=None, label=None, start=0.0, dry_run=False):
 
 def mp3_convert(video_path, start=0.0):
     """Convert a downloaded video into source/mp3/ and return the mp3 path."""
-    stem = os.path.splitext(os.path.basename(video_path))[0]
-    dest = os.path.join(mp3.DEFAULT_OUT, stem + ".mp3")
+    dest = os.path.join(mp3.DEFAULT_OUT, mp3.output_stem(video_path) + ".mp3")
     os.makedirs(mp3.DEFAULT_OUT, exist_ok=True)
-    mp3.convert(video_path, dest, title=mp3.sanitize_label(stem), start=start)
+    mp3.convert(video_path, dest, title=mp3.sanitize_label(mp3.output_stem(video_path)), start=start)
     print(f"  converted: {dest}")
     return dest
+
+
+def restage():
+    """Re-copy every ledgered song from source/mp3/ into sync/ (after re-encoding etc.)."""
+    ledger = ledger_load()
+    if not ledger:
+        sys.exit("ERROR: ledger is empty")
+    missing = []
+    for card_rel in sorted(ledger):
+        parts = card_rel.split(os.sep)
+        label = FILE_RE.match(parts[-1]).group(2)
+        lib_path = os.path.join(mp3.DEFAULT_OUT, label + ".mp3")
+        if not os.path.isfile(lib_path):
+            missing.append(card_rel)
+            continue
+        dest = os.path.join(SYNC_DIR, card_rel)
+        shutil.copyfile(lib_path, dest)
+        retag(dest, parts[-1][:3])
+        print(f"  restaged: {card_rel}")
+    if missing:
+        print(f"  MISSING in source/mp3/ (not restaged): {', '.join(missing)}")
+    clean_sync()
 
 
 def clean_sync():
@@ -430,6 +451,8 @@ def main():
     p_clean = sub.add_parser("clean", help="dot_clean + remove ghost files (before ejecting)")
     card_arg(p_clean)
 
+    p_restage = sub.add_parser("restage", help="re-copy all songs from source/mp3/ into sync/ (after re-encoding)")
+
     sub.add_parser("list", help="show sync/ tree with YouTube sources")
 
     args = parser.parse_args()
@@ -441,6 +464,8 @@ def main():
         sys.exit(0 if check(args.card) else 1)
     elif args.cmd == "clean":
         clean(args.card)
+    elif args.cmd == "restage":
+        restage()
     elif args.cmd == "list":
         list_sync()
 

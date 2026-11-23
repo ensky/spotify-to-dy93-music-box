@@ -23,7 +23,7 @@ dy93/
 
 - FAT32 SD 卡；folder `01`–`99`，**每個 folder 內檔案從 `001` 開始連續編號**：`NN/NNN_標籤.mp3`
 - 必須是真的 MP3（MPEG-1 Layer III）；**取樣率 ≤ 44.1 kHz**（48 kHz 晶片讀不了）
-- 預設 128 kbps CBR（晶片未驗證過 320 kbps，要換先放一首測試）
+- 預設 192 kbps CBR（YouTube 音源本身 ~130k opus；192k 蓋住二次轉檔損失，再高無意義）
 - tag 只能是數字值（`001`、`002`…），不可內嵌封面圖
 - macOS 會塞幽靈檔（`._*`、`.DS_Store`）讓晶片讀歪——push 完自動清，拔卡前也可手動跑 `clean`
 
@@ -42,6 +42,7 @@ python3 sync.py add "網址" --folder 3          # 裝進 03/（檔號接著編�
 python3 sync.py add "網址" --start 10.05      # 剪掉前 10.05 秒片頭
 python3 yt.py --list "關鍵字"                  # 列前 5 個候選，不下載
 python3 sync.py list                          # 看 sync/ 每首歌的 YouTube 來源
+python3 sync.py restage                       # 重轉/改音質後，從 source/mp3/ 重建 sync/
 ```
 
 SD 卡插上來之後（唯一要做的事）：
@@ -56,7 +57,8 @@ diskutil eject SDCARD       # 拔卡前一定要正常退出
 
 - root 下的 `01/`、`02/`、`03/` 是舊歌庫封存（2026-08，與 sync/ 無關），**保持原樣不要動**
 - `sync/` 是卡上內容的唯一真相；改卡一律走 script，不要直接動卡或手動改 sync/
+- `source/mp3/` 的檔名 = 卡上的標籤名（`NNN_<label>.mp3` 的 `<label>`）；
+  重轉之後跑 `python3 sync.py restage` 重建 sync/ 再 push
 - `sync/` 下每個檔案都必須在 `sync/sources.tsv` 有來源紀錄（`check` 會驗證）；
   直接以檔案方式 `add` 的歌，來源欄是 `-`，要人工補
-- 帳本裡 `(legacy, pre-dy93)` 是移轉進來的舊歌，來源未知
 - 依賴：`yt-dlp`（brew）、`ffmpeg`；YouTube 403 時 `yt.py` 會自動 fallback 到 HLS 串流

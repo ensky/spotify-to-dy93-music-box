@@ -3,7 +3,8 @@
 
 Chip requirements enforced here:
   - MP3 (MPEG-1 Layer III), sample rate <= 44.1 kHz (48 kHz fails on the chip)
-  - default 128k CBR (--bitrate 320 also possible)
+  - default 192k CBR (headroom for the lossy->lossy transcode; YouTube
+    audio itself is ~130k, so higher is pointless)
   - minimal ID3v1 tags only (no embedded artwork, no ID3v2)
 
 Usage:
@@ -21,6 +22,14 @@ import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(BASE_DIR, "source", "mp3")
 MAX_SAMPLE_RATE = 44100  # Hz; the chip cannot read 48 kHz
+# YouTube titles end with " [video id]" when downloaded via yt.py;
+# strip it so library/sync files are named by song label only
+ID_RE = re.compile(r"\s*\[[\w-]{11}\]\s*$")
+
+
+def output_stem(video_path):
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    return ID_RE.sub("", stem)
 
 
 def sanitize_label(text, max_len=20):
@@ -48,7 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert video to chip-safe mp3 in source/mp3/.")
     parser.add_argument("inputs", nargs="+", help="video files (usually under source/yt/)")
     parser.add_argument("--start", type=float, default=0.0, help="trim seconds from the start (intro)")
-    parser.add_argument("--bitrate", default="128k", help="mp3 bitrate (default: 128k)")
+    parser.add_argument("--bitrate", default="192k", help="mp3 bitrate (default: 192k)")
     parser.add_argument("--out", default=DEFAULT_OUT, help=f"output dir (default: {DEFAULT_OUT})")
     args = parser.parse_args()
 
@@ -56,9 +65,8 @@ def main():
     for src in args.inputs:
         if not os.path.isfile(src):
             sys.exit(f"ERROR: not a file: {src}")
-        stem = os.path.splitext(os.path.basename(src))[0]
-        dest = os.path.join(args.out, stem + ".mp3")
-        convert(src, dest, title=sanitize_label(stem), start=args.start, bitrate=args.bitrate)
+        dest = os.path.join(args.out, output_stem(src) + ".mp3")
+        convert(src, dest, title=sanitize_label(output_stem(src)), start=args.start, bitrate=args.bitrate)
         print(f"  converted: {dest}")
 
 
