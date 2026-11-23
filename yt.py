@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -63,27 +64,31 @@ def download(query_or_url, out_dir=DEFAULT_OUT, capture=False):
         "-P", out_dir,
         "-o", "%(title)s [%(id)s].%(ext)s",
         "--download-archive", os.path.join(out_dir, ARCHIVE_NAME),
+        # "id" prints even for videos skipped by the download archive
         "--print", "after_move:filepath",
+        "--print", "id",
     ]
     last_err = ""
     for fmt in FORMATS:
         cmd = base_cmd + ["-f", fmt, target]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
-            paths = [ln.strip() for ln in result.stdout.splitlines() if os.path.isfile(ln.strip())]
+            lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+            ids = [ln for ln in lines if re.fullmatch(r"[\w-]{11}", ln)]
+            paths = [ln for ln in lines if os.path.isfile(ln)]
+            if not paths and ids:
+                # already in the archive: resolve the file we downloaded before
+                paths = [
+                    os.path.join(out_dir, f)
+                    for f in os.listdir(out_dir) if f"[{ids[0]}]" in f
+                ]
             if not paths:
                 raise RuntimeError(
                     f"no file produced for: {label}\n"
-                    "  (already downloaded before? see source/yt/)"
+                    "  (not in source dir and not in the download archive?)"
                 )
             path = paths[0]
-            m = None
-            import re
-            for candidate in paths:
-                m = re.search(r"\[([\w-]{11})\]\.\w+$", os.path.basename(candidate))
-                if m:
-                    break
-            vid = m.group(1) if m else ""
+            vid = ids[0] if ids else ""
             print(f"  saved: {path}")
             return (path, vid) if capture else (None, "")
         last_err = result.stderr[-2000:]

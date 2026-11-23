@@ -4,11 +4,14 @@
 Layout:
   sync/NN/NNN_label.mp3   exact mirror of what the card should contain;
                           inside each folder files are numbered from 001
-  sync/sources.tsv        ledger: for every sync file, its YouTube source
+  sync/sources.tsv        ledger: for every sync file, its sources:
+                          card_path, yt_id, yt_url, yt_title, spotify_uri, added
+  sync/playlists.tsv      folder <-> Spotify playlist mapping (pipeline.py)
+  sync/title_aliases.tsv  playlist title -> library label aliases
 
 Chip rules (enforced here):
   - folders "01".."99", files inside numbered 001, 002, ... per folder
-  - MP3, sample rate <= 44.1 kHz, minimal number-only ID3v1 tags
+  - MP3, sample rate <= 44.1 kHz, default 192k CBR, number-only ID3v1 tags
   - no macOS ghost files (._*, .DS_Store) — dot_clean before ejecting
 
 Subcommands:
@@ -21,9 +24,12 @@ Subcommands:
                       ghost files. This is the ONLY thing to do when the
                       card is plugged in.
   check [--card DIR]  verify card: numbering from 001 per folder, audio
-                      format, no junk, and content identical to sync/.
+                      format, no junk, content identical to sync/, ledger
+                      entry present for every file.
   clean [--card DIR]  dot_clean + remove ghost files (run before ejecting).
-  list                show the sync/ tree with each file's YouTube source.
+  restage             re-copy every ledgered song from source/mp3/ into
+                      sync/ (after re-encoding, e.g. a bitrate change).
+  list                show the sync/ tree with each file's sources.
 
 After pushing, eject safely:  diskutil eject SDCARD
 """
@@ -48,7 +54,7 @@ LEDGER = os.path.join(SYNC_DIR, "sources.tsv")
 DEFAULT_CARD = "/Volumes/SDCARD"
 MAX_SAMPLE_RATE = mp3.MAX_SAMPLE_RATE
 FILE_RE = re.compile(r"^(\d{3})_(.+)\.mp3$")
-ID_RE = re.compile(r"\s*\[([\w-]{11})\]\s*$")
+LEDGER_FIELDS = ["card_path", "yt_id", "yt_url", "yt_title", "spotify_uri", "added"]
 
 
 # ── generic helpers ──────────────────────────────────────────────────────────
@@ -124,10 +130,10 @@ def retag(path, num):
     os.replace(tmp, path)
 
 
-# ── ledger ───────────────────────────────────────────────────────────────────
+# ── ledger (sync/sources.tsv) ────────────────────────────────────────────────
 
 def ledger_load():
-    """Return {card_rel_path: (yt_id, yt_url, yt_title, added)}."""
+    """Return {card_path: {yt_id, yt_url, yt_title, spotify_uri, added}}."""
     table = {}
     if not os.path.isfile(LEDGER):
         return table
@@ -137,27 +143,42 @@ def ledger_load():
             if not line or line.startswith("#"):
                 continue
             parts = line.split("\t")
-            while len(parts) < 5:
-                parts.append("")
-            table[parts[0]] = tuple(parts[1:5])
+            row = {k: (parts[i] if i < len(parts) else "-") for i, k in enumerate(LEDGER_FIELDS)}
+            table[row["card_path"]] = row
     return table
 
 
-def ledger_append(card_rel, yt_id, yt_url, yt_title):
-    table = ledger_load()
-    table[card_rel] = (yt_id, yt_url, yt_title, datetime.date.today().isoformat())
-    lines = [
-        "# card_path\tyt_id\tyt_url\tyt_title\tadded",
-    ]
-    for rel in sorted(table):
-        yt_id, yt_url, yt_title, added = table[rel]
-        yt_title = str(yt_title).replace("\t", " ").replace("\n", " ")
-        lines.append(f"{rel}\t{yt_id}\t{yt_url}\t{yt_title}\t{added}")
+def ledger_write(table):
+    lines = ["# " + "\t".join(LEDGER_FIELDS)]
+    for card_path in sorted(table):
+        row = table[card_path]
+        row.setdefault("card_path", card_path)
+        for k in LEDGER_FIELDS:
+            row.setdefault(k, "-")
+        vals = [str(row[k]).replace("\t", " ").replace("\n", " ") for k in LEDGER_FIELDS]
+        lines.append("\t".join(vals))
     with open(LEDGER, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
 
-# ── sync/ staging ────────────────────────────────────────────────────────────
+def ledger_update(card_path, **kw):
+    table = ledger_load()
+    row = table.get(card_path, {})
+    row["card_path"] = card_path
+    row.setdefault("added", datetime.date.today().isoformat())
+    row.update(kw)
+    table[card_path] = row
+    ledger_write(table)
+
+
+def ledger_drop(card_path):
+    table = ledger_load()
+    if card_path in table:
+        del table[card_path]
+        ledger_write(table)
+
+
+# ── sync/ helpers ────────────────────────────────────────────────────────────
 
 def sync_mp3s(folder_path):
     out = []
@@ -186,66 +207,95 @@ def next_file_num(folder_num):
     return (max(num for num, _l, _p in files) + 1) if files else 1
 
 
+def library_path_for(label):
+    return os.path.join(mp3.DEFAULT_OUT, label + ".mp3")
+
+
+def mp3_convert(video_path, start=0.0, bitrate="192k"):
+    """Convert a downloaded video into source/mp3/ and return the mp3 path."""
+    dest = os.path.join(mp3.DEFAULT_OUT, mp3.output_stem(video_path) + ".mp3")
+    os.makedirs(mp3.DEFAULT_OUT, exist_ok=True)
+    mp3.convert(video_path, dest, title=mp3.sanitize_label(mp3.output_stem(video_path)),
+                start=start, bitrate=bitrate)
+    print(f"  converted: {dest}")
+    return dest
+
+
+def convert_to_library(video_path, label, start=0.0, bitrate="192k"):
+    """Convert video and file it under the label name; returns the library path."""
+    tmp = mp3_convert(video_path, start=start, bitrate=bitrate)
+    dest = library_path_for(label)
+    if os.path.abspath(tmp) != os.path.abspath(dest):
+        shutil.move(tmp, dest)
+    return dest
+
+
+def stage_into_folder(mp3_path, folder_num, label, yt_id="", yt_url="", yt_title="", spotify_uri=""):
+    """Copy a library mp3 into sync/<NN>/ at the next free slot + retag + ledger."""
+    folder_path = os.path.join(SYNC_DIR, f"{folder_num:02d}")
+    os.makedirs(folder_path, exist_ok=True)
+    file_num = next_file_num(folder_num)
+    rel = f"{folder_num:02d}/{file_num:03d}_{mp3.sanitize_label(label)}.mp3"
+    dest = os.path.join(SYNC_DIR, rel)
+    shutil.copyfile(mp3_path, dest)
+    retag(dest, f"{file_num:03d}")
+    ledger_update(rel, yt_id=yt_id or "-", yt_url=yt_url or "-", yt_title=yt_title or "-",
+                  spotify_uri=spotify_uri or "-")
+    print(f"  staged: {rel}" + (f"  (source: {yt_url})" if yt_url else ""))
+    return rel
+
+
+def clean_sync():
+    for path, rel in iter_files(SYNC_DIR):
+        if is_junk(os.path.basename(path)):
+            os.remove(path)
+            print(f"  removed junk from sync/: {rel}")
+
+
+# ── add ──────────────────────────────────────────────────────────────────────
+
 def add(sources, folder=None, label=None, start=0.0, dry_run=False):
     if not os.path.isdir(SYNC_DIR):
         os.makedirs(SYNC_DIR, exist_ok=True)
     if dry_run:
         cur = folder if folder is not None else next_folder()
         for src in sources:
-            print(f"  (dry-run) would stage at {cur:02d}/: {src}")
+            print(f"  (dry-run) would stage at {cur:02d}/001: {src}")
             cur += 1
         return
-
+    if folder is not None and not 1 <= folder <= 99:
+        sys.exit(f"ERROR: folder must be 01-99, got {folder}")
     for src in sources:
-        yt_id, yt_url, yt_title = "", "", ""
         if os.path.isfile(src):
             mp3_path = src
+            yt_id = yt_url = yt_title = ""
         else:
-            # treat as YouTube URL / search term: video -> mp3
             print(f"  '{src}' is not a local file — downloading via yt.py + mp3.py")
             video_path, yt_id = yt.download(src, capture=True)
             yt_url = f"https://www.youtube.com/watch?v={yt_id}" if yt_id else ""
             yt_title = os.path.splitext(os.path.basename(video_path))[0]
             mp3_path = mp3_convert(video_path, start=start)
-        stem = os.path.splitext(os.path.basename(mp3_path))[0]
-        song_label = label or ID_RE.sub("", stem)
-        yt_title = yt_title or stem
-
+        song_label = label or os.path.splitext(os.path.basename(mp3_path))[0]
         fnum = folder if folder is not None else next_folder()
         if not 1 <= fnum <= 99:
-            sys.exit(f"ERROR: folder must be 01-99, got {fnum}")
-        folder_path = os.path.join(SYNC_DIR, f"{fnum:02d}")
-        os.makedirs(folder_path, exist_ok=True)
-        file_num = next_file_num(fnum)
-        dest = os.path.join(folder_path, f"{file_num:03d}_{mp3.sanitize_label(song_label)}.mp3")
-        shutil.copyfile(mp3_path, dest)
-        retag(dest, f"{file_num:03d}")
-        ledger_append(os.path.relpath(dest, SYNC_DIR), yt_id or "-", yt_url or "-", yt_title)
-        print(f"  staged: {os.path.relpath(dest, SYNC_DIR)}"
-              + (f"  (source: {yt_url})" if yt_url else ""))
+            sys.exit("ERROR: folders 01-99 exhausted")
+        stage_into_folder(mp3_path, fnum, song_label, yt_id=yt_id, yt_url=yt_url, yt_title=yt_title)
         label = None  # explicit label only applies to the first song
     clean_sync()
 
 
-def mp3_convert(video_path, start=0.0):
-    """Convert a downloaded video into source/mp3/ and return the mp3 path."""
-    dest = os.path.join(mp3.DEFAULT_OUT, mp3.output_stem(video_path) + ".mp3")
-    os.makedirs(mp3.DEFAULT_OUT, exist_ok=True)
-    mp3.convert(video_path, dest, title=mp3.sanitize_label(mp3.output_stem(video_path)), start=start)
-    print(f"  converted: {dest}")
-    return dest
-
+# ── restage ──────────────────────────────────────────────────────────────────
 
 def restage():
     """Re-copy every ledgered song from source/mp3/ into sync/ (after re-encoding etc.)."""
-    ledger = ledger_load()
-    if not ledger:
+    table = ledger_load()
+    if not table:
         sys.exit("ERROR: ledger is empty")
     missing = []
-    for card_rel in sorted(ledger):
+    for card_rel in sorted(table):
         parts = card_rel.split(os.sep)
         label = FILE_RE.match(parts[-1]).group(2)
-        lib_path = os.path.join(mp3.DEFAULT_OUT, label + ".mp3")
+        lib_path = library_path_for(label)
         if not os.path.isfile(lib_path):
             missing.append(card_rel)
             continue
@@ -256,13 +306,6 @@ def restage():
     if missing:
         print(f"  MISSING in source/mp3/ (not restaged): {', '.join(missing)}")
     clean_sync()
-
-
-def clean_sync():
-    for path, rel in iter_files(SYNC_DIR):
-        if is_junk(os.path.basename(path)):
-            os.remove(path)
-            print(f"  removed junk from sync/: {rel}")
 
 
 # ── push / check / clean on the card ─────────────────────────────────────────
@@ -286,14 +329,12 @@ def push(card):
     if not desired:
         sys.exit(f"ERROR: sync/ has no mp3 files: {SYNC_DIR}")
 
-    # current card mp3 state
     actual = {}
-    junk = []
     for path, rel in iter_files(card):
         name = os.path.basename(path)
         if is_junk(name):
-            junk.append((path, rel))
-        elif name.lower().endswith(".mp3"):
+            continue
+        if name.lower().endswith(".mp3"):
             actual[rel] = path
 
     added = updated = removed = unchanged = 0
@@ -315,7 +356,6 @@ def push(card):
         removed += 1
         print(f"  - {rel}")
 
-    # prune card dirs that sync/ does not have
     for d in os.listdir(card):
         if re.fullmatch(r"\d{2}", d) and not os.path.isdir(os.path.join(SYNC_DIR, d)):
             shutil.rmtree(os.path.join(card, d), ignore_errors=True)
@@ -354,7 +394,6 @@ def check(card, quiet=False):
                 ok = False
                 print(f"  BAD   {rel}: {msg}")
 
-    # junk / stray files
     for path, rel in iter_files(card):
         name = os.path.basename(path)
         parts = rel.split(os.sep)
@@ -370,7 +409,6 @@ def check(card, quiet=False):
             ok = False
             print(f"  BAD NAME  {rel}  <- must be NN/NNN_label.mp3")
 
-    # mirror comparison against sync/
     desired = sync_desired()
     actual_mp3 = {}
     for path, rel in iter_files(card):
@@ -386,12 +424,11 @@ def check(card, quiet=False):
         if md5sum(desired[rel]) != md5sum(actual_mp3[rel]):
             ok = False
             print(f"  DIFFERS  {rel}  <- run push")
-    if desired:
-        ledger = ledger_load()
-        for rel in sorted(desired):
-            if rel not in ledger:
-                ok = False
-                print(f"  NO SOURCE RECORDED  {rel}  <- every sync file needs a sources.tsv entry")
+    ledger = ledger_load()
+    for rel in sorted(desired):
+        if rel not in ledger:
+            ok = False
+            print(f"  NO SOURCE RECORDED  {rel}  <- every sync file needs a ledger entry")
 
     print(f"\n  {'All good!' if ok else 'PROBLEMS FOUND'}")
     return ok
@@ -412,7 +449,7 @@ def clean(card):
 
 
 def list_sync():
-    ledger = ledger_load()
+    table = ledger_load()
     folders = sync_folders()
     if not folders:
         print(f"  sync/ is empty: {SYNC_DIR}")
@@ -421,8 +458,10 @@ def list_sync():
         print(f"  {d}/")
         for num, label, path in sync_mp3s(os.path.join(SYNC_DIR, d)):
             rel = f"{d}/{os.path.basename(path)}"
-            _yt_id, yt_url, yt_title, _added = ledger.get(rel, ("-", "-", "-", "-"))
-            source = yt_url if yt_url and yt_url != "-" else yt_title or "-"
+            row = table.get(rel, {})
+            source = row.get("spotify_uri") or row.get("yt_url") or row.get("yt_title") or "-"
+            if source.startswith("spotify:"):
+                source = f"https://open.spotify.com/track/{source.split(':')[-1]}"
             print(f"    {num:03d}_{label}.mp3   <- {source}")
 
 
@@ -451,9 +490,8 @@ def main():
     p_clean = sub.add_parser("clean", help="dot_clean + remove ghost files (before ejecting)")
     card_arg(p_clean)
 
-    p_restage = sub.add_parser("restage", help="re-copy all songs from source/mp3/ into sync/ (after re-encoding)")
-
-    sub.add_parser("list", help="show sync/ tree with YouTube sources")
+    sub.add_parser("restage", help="re-copy all songs from source/mp3/ into sync/")
+    sub.add_parser("list", help="show sync/ tree with sources")
 
     args = parser.parse_args()
     if args.cmd == "add":

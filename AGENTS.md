@@ -9,12 +9,16 @@ dy93/
 ├── yt.py               # 步驟 1：YouTube → source/yt/（原始影片，檔名含 [video id]）
 ├── mp3.py              # 步驟 2：source/yt/ → source/mp3/（轉好的 mp3，可剪片頭）
 ├── sync.py             # 步驟 3：管理 sync/ 並推送到 SD 卡
+├── spotify.py          # Spotify 公開歌單讀取（免登入）
+├── pipeline.py         # 全自動：三份歌單 → 對應 folder → 下載轉檔重排 → push
 ├── AGENTS.md           # 本文件（CLAUDE.md 是它的 symlink）
 ├── source/
 │   ├── yt/             # YouTube 原始影片（來源真相，不要手動改）
 │   └── mp3/            # 轉好的 mp3（以歌名標籤命名，準備上卡的歌）
 └── sync/
-    ├── sources.tsv     # 帳本：sync/ 下每個檔案對應的 YouTube 來源
+    ├── sources.tsv     # 帳本：sync/ 下每個檔案對應的 YouTube + Spotify 來源
+    ├── playlists.tsv   # folder ↔ Spotify 歌單的預先對應（pipeline.py 用）
+    ├── title_aliases.tsv  # 歌單標題 → 曲庫標籤的別名（重用已下載的歌）
     ├── 01/001_xxx.mp3  # SD 卡的完整映射（NN folder / 每個 folder 內從 001 編號）
     └── ...
 ```
@@ -29,13 +33,26 @@ dy93/
 
 ## 常見任務
 
-把某首歌裝到最新號碼（最常用，一句話完成：下載 → 轉檔 → 進 sync/）：
+**「請幫我跑一次 pipeline」**（一次同步所有歌單 → 卡）：
+
+```bash
+python3 pipeline.py            # 拉歌單 → 對號 → 下載缺的歌 → 重排 sync/ → push 卡
+python3 pipeline.py --dry-run  # 只看歌單與計畫，不動手
+python3 pipeline.py --no-push  # 只更新 sync/，不碰卡
+```
+
+Folder 對歌單的預先對應在 `sync/playlists.tsv`；歌單順序 = 檔號順序（001 = 第一首），
+以 Spotify 為準完整鏡射（歌單刪歌、改順序，卡就跟著變）。號碼 ↔ Spotify 的對應
+記在 `sync/sources.tsv` 的 `spotify_uri` 欄。歌單標題 ↔ 曲庫檔名的別名在
+`sync/title_aliases.tsv`（有別名才能重用已下載的歌；新歌自動用標題當檔名）。
+
+單首裝卡（不經歌單）：
 
 ```bash
 python3 sync.py add "歌名或 YouTube 網址"
 ```
 
-指定 folder / 剪片頭 / 先看候選：
+其他：
 
 ```bash
 python3 sync.py add "網址" --folder 3          # 裝進 03/（檔號接著編）

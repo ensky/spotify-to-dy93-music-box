@@ -37,7 +37,7 @@ def sanitize_label(text, max_len=20):
     return text[:max_len] or "song"
 
 
-def convert(src, dest, title, start=0.0, bitrate="128k"):
+def convert(src, dest, title, start=0.0, bitrate="192k"):
     cmd = ["ffmpeg", "-y", "-loglevel", "error"]
     if start and start > 0:
         cmd += ["-ss", f"{start:.3f}"]
