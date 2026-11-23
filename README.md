@@ -1,0 +1,86 @@
+# spotify-to-dy93-music-box — 兒歌音樂盒 SD 卡流水線
+
+把 Spotify 歌單變成玩具音樂機吃得下的 SD 卡：抓公開歌單曲目 → 從 YouTube 下載原始影片
+→ 轉成晶片相容的 mp3（剪片頭）→ 按歌單順序排號 → 鏡射上卡。
+
+## 目錄結構
+
+```
+spotify-to-dy93-music-box/
+├── yt.py               # 步驟 1：YouTube → source/yt/（原始影片，檔名含 [video id]）
+├── mp3.py              # 步驟 2：source/yt/ → source/mp3/（轉好的 mp3，可剪片頭）
+├── sync.py             # 步驟 3：管理 sync/ 並推送到 SD 卡
+├── spotify.py          # Spotify 公開歌單讀取（免登入）
+├── pipeline.py         # 全自動：三份歌單 → 對應 folder → 下載轉檔重排 → push
+├── AGENTS.md           # symlink → README.md（agent 進來先讀）
+├── CLAUDE.md           # symlink → README.md
+├── source/
+│   ├── yt/             # YouTube 原始影片（來源真相，不要手動改）
+│   └── mp3/            # 轉好的 mp3（以歌名標籤命名，準備上卡的歌）
+└── sync/
+    ├── sources.tsv     # 帳本：sync/ 下每個檔案對應的 YouTube + Spotify 來源
+    ├── playlists.tsv   # folder ↔ Spotify 歌單的預先對應（pipeline.py 用）
+    ├── title_aliases.tsv  # 歌單標題 → 曲庫標籤的別名（重用已下載的歌）
+    ├── trims.tsv       # yt_id → 剪掉片頭/前奏秒數（restage --from-yt / pipeline 自動套用）
+    ├── 01/001_xxx.mp3  # SD 卡的完整映射（NN folder / 每個 folder 內從 001 編號）
+    └── ...
+```
+
+## 晶片限制（硬規則，轉檔與 check 都會驗證）
+
+- FAT32 SD 卡；folder `01`–`99`，**每個 folder 內檔案從 `001` 開始連續編號**：`NN/NNN_標籤.mp3`
+- 必須是真的 MP3（MPEG-1 Layer III）；**取樣率 ≤ 44.1 kHz**（48 kHz 晶片讀不了）
+- 預設 192 kbps CBR（YouTube 音源本身 ~130k opus；192k 蓋住二次轉檔損失，再高無意義）
+- tag 只能是數字值（`001`、`002`…），不可內嵌封面圖
+- macOS 會塞幽靈檔（`._*`、`.DS_Store`）讓晶片讀歪——push 完自動清，拔卡前也可手動跑 `clean`
+
+## 常見任務
+
+**「請幫我跑一次 pipeline」**（一次同步所有歌單 → 卡）：
+
+```bash
+python3 pipeline.py            # 拉歌單 → 對號 → 下載缺的歌 → 重排 sync/ → push 卡
+python3 pipeline.py --dry-run  # 只看歌單與計畫，不動手
+python3 pipeline.py --no-push  # 只更新 sync/，不碰卡
+```
+
+Folder 對歌單的預先對應在 `sync/playlists.tsv`；歌單順序 = 檔號順序（001 = 第一首），
+以 Spotify 為準完整鏡射（歌單刪歌、改順序，卡就跟著變）。號碼 ↔ Spotify 的對應
+記在 `sync/sources.tsv` 的 `spotify_uri` 欄。歌單標題 ↔ 曲庫檔名的別名在
+`sync/title_aliases.tsv`（有別名才能重用已下載的歌；新歌自動用標題當檔名）。
+
+單首裝卡（不經歌單）：
+
+```bash
+python3 sync.py add "歌名或 YouTube 網址"
+```
+
+其他：
+
+```bash
+python3 sync.py add "網址" --folder 3          # 裝進 03/（檔號接著編）
+python3 sync.py add "網址" --start 10.05      # 剪掉前 10.05 秒片頭
+python3 yt.py --list "關鍵字"                  # 列前 5 個候選，不下載
+python3 sync.py list                          # 看 sync/ 每首歌的 YouTube 來源
+python3 sync.py restage                       # 重轉/改音質後，從 source/mp3/ 重建 sync/
+python3 sync.py restage --from-yt             # 從 source/yt/ 重轉（套用 trims.tsv）並重建 sync/
+```
+
+SD 卡插上來之後（唯一要做的事）：
+
+```bash
+python3 sync.py push        # 卡 ← sync/ 完整鏡射（新增/更新/刪除），並清幽靈檔
+python3 sync.py check       # 驗證：編號、音訊格式、無幽靈檔、與 sync/ 一致、帳本有來源
+diskutil eject SDCARD       # 拔卡前一定要正常退出
+```
+
+## 規則
+
+- git 只追蹤程式與帳本；大型媒體檔（`source/`、`sync/**/*.mp3`）不入庫
+- `sync/` 是卡上內容的唯一真相；改卡一律走 script，不要直接動卡或手動改 sync/
+- `source/mp3/` 的檔名 = 卡上的標籤名（`NNN_<label>.mp3` 的 `<label>`）；
+  重轉之後跑 `python3 sync.py restage` 重建 sync/ 再 push
+- `sync/` 下每個檔案都必須在 `sync/sources.tsv` 有來源紀錄（`check` 會驗證）；
+  直接以檔案方式 `add` 的歌，來源欄是 `-`，要人工補
+- 需求：Python 3（純 stdlib，無 pip 依賴）＋ `brew install yt-dlp ffmpeg`；
+  YouTube 403 時 `yt.py` 會自動 fallback 到 HLS 串流
