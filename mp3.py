@@ -8,8 +8,8 @@ Chip requirements enforced here:
   - minimal ID3v1 tags only (no embedded artwork, no ID3v2)
 
 Usage:
-  python3 mp3.py "source/yt/玩具國 [aOWZZPkh78s].mp4"
-  python3 mp3.py --start 10.05 "source/yt/玩具國 [aOWZZPkh78s].mp4"   # skip 10.05s intro
+  python3 mp3.py "source/yt/<Song Name> [<video id>].mp4"
+  python3 mp3.py --start 10.05 "source/yt/<Song Name> [<video id>].mp4"   # skip 10.05s intro
   python3 mp3.py *.mp4 --bitrate 320k
 """
 

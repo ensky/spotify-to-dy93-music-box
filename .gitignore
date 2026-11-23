@@ -1,7 +1,7 @@
-# 大型媒體檔不入 git，來源與對應關係都在 sources.tsv
+# 只追蹤程式；sync/ 全目錄（映射 + 帳本）是本機資料，不入 git
 source/yt/
 source/mp3/
-sync/**/*.mp3
+sync/
 # root 下的 01/ 02/ 03/ 是 2026-08 的舊歌庫封存（與 sync/ 無關，保持原樣）
 /01/
 /02/

@@ -17,7 +17,7 @@ spotify-to-dy93-music-box/
 ├── source/
 │   ├── yt/             # YouTube 原始影片（來源真相，不要手動改）
 │   └── mp3/            # 轉好的 mp3（以歌名標籤命名，準備上卡的歌）
-└── sync/
+└── sync/                # （本機資料，gitignored — 見下方「資料檔」）
     ├── sources.tsv     # 帳本：sync/ 下每個檔案對應的 YouTube + Spotify 來源
     ├── playlists.tsv   # folder ↔ Spotify 歌單的預先對應（pipeline.py 用）
     ├── title_aliases.tsv  # 歌單標題 → 曲庫標籤的別名（重用已下載的歌）
@@ -74,9 +74,33 @@ python3 sync.py check       # 驗證：編號、音訊格式、無幽靈檔、�
 diskutil eject SDCARD       # 拔卡前一定要正常退出
 ```
 
+## 資料檔（本機維護，不入 git）
+
+`sync/` 下的對應檔案是個人資料，首次使用自己建立（tab 分欄，`#` 開頭為註解）：
+
+`sync/playlists.tsv` — folder ↔ 歌單對應：
+```
+# folder	playlist_id	playlist_name
+02	<your_spotify_playlist_id>	my playlist
+```
+
+`sync/title_aliases.tsv` — 歌單標題 → 曲庫標籤（讓 pipeline 重用已下載的歌）：
+```
+# playlist title	library label
+Five Little Ducks	Five
+```
+
+`sync/trims.tsv` — yt_id → 片頭秒數：
+```
+# yt_id	start_sec	note
+<video_id>	10.05	channel bumper
+```
+
+`sync/sources.tsv` 由程式維護（號碼 ↔ YouTube ↔ Spotify 對應帳本），不用手建。
+
 ## 規則
 
-- git 只追蹤程式與帳本；大型媒體檔（`source/`、`sync/**/*.mp3`）不入庫
+- git 只追蹤程式；`sync/`（映射與帳本）與 `source/`（媒體檔）都是本機資料，不入庫
 - `sync/` 是卡上內容的唯一真相；改卡一律走 script，不要直接動卡或手動改 sync/
 - `source/mp3/` 的檔名 = 卡上的標籤名（`NNN_<label>.mp3` 的 `<label>`）；
   重轉之後跑 `python3 sync.py restage` 重建 sync/ 再 push
