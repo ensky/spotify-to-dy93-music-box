@@ -2,4 +2,8 @@
 source/yt/
 source/mp3/
 sync/**/*.mp3
+# root 下的 01/ 02/ 03/ 是 2026-08 的舊歌庫封存（與 sync/ 無關，保持原樣）
+/01/
+/02/
+/03/
 .DS_Store
